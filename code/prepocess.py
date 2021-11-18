@@ -14,211 +14,310 @@ import lmfit
 
 class FilterData():
 
-    
     def __init__(self, data, wavelength):
         self.wavelength = wavelength
         self.data = data
         self.baseline_drift_done=False
         self.original_data=self.data.copy()
-    
-    def load_cachan(file,time,wavelength_range=(204.561,684.921),sep='\t',pixels=1024):
-        """Pretreatment of photolysis data
+
+    @classmethod
+    def load_cachan(cls, path, time, wavelength_range=(204.561, 684.921),
+                    pixels=1024, sep='\t', decimal='.'):
+        """
+        Function to load the data, in specific manner. The data is obtain from
+        a spectrometer in the University Paris-Saclay PPSM group
+
         Parameters
         ----------
-        file: str (string path of the file)
-        time: float (time between two spectra) normally used 0.687 july 2019  or 0.0842 november 2019 january 2020 
-        wavelength_range: list or tuple (first element:first value of the range; second element: the last value)
-        sep: default tab (\t) (speration of columns in file) 
-        pixels: int default 1024 (number of pixels)
-        time: float deafautl 1.44 (time between two spectra)
+        path: str (string path of the file)
+
+        time: float
+            time between the collection of two consecutive spectra.
+
+        pixels: int
+            number of pixels of the spectrometer. default 1024
+
+        wavelength_range: tuple
+            initial and final values of the wavelength detector range
+
+        sep: str
+            separator between columns of the file
+
+        decimal: str
+            decimal value used in the data
         """
-        wavelength=np.linspace(wavelength_range[0],wavelength_range[1],pixels)
-        name=['Time']+[round(i,3) for i in wavelength]
-        data=pd.read_csv(file,sep=sep, header=None, names=name)
-        time=[ (i-1)*time for i in data.index]
+        wavelength = np.linspace(wavelength_range[0],
+                                 wavelength_range[1], pixels)
+        name = ['Time']+[round(i, 3) for i in wavelength]
+        data = pd.read_csv(path, sep=sep, decimal=decimal,
+                           header=None, names=name)
+        time = [(i-1)*time for i in data.index]
         data.Time = time
-        return FilterData(data, wavelength)
-    
-    def load_lille(file,  sep=',', decimal='.'):
+        return cls(data, wavelength)
+
+    @classmethod
+    def load_general(cls, path,  sep=',', decimal='.'):
         """
-        For data recorded in Lille
+        Function for loading general data, time should be in the rows and
+        wavelength the columns.
+
+        Parameters
+        ----------
+        path: str (string path of the file)
+
+        sep: str
+            separator between columns of the file
+
+        decimal: str
+            decimal value used in the data
+
         """
-        data=pd.read_csv(file, sep=sep,)
+        data = pd.read_csv(path, sep=sep, decimal=decimal)
         wavelength = np.array([float(i) for i in data.columns[1:]])
-        return FilterData(data, wavelength)
+        return cls(data, wavelength)
     
-    def cutDataTime(self,time, itself=True):
+    def cut_data_time(self, time: int, itself=True):
         """ cut the data in time range
          Parameters
         ----------
-        time: int (every time point bigger than this number will be deleted)
-        itself: bool (if True will be done in the data it self False returns the new data)
+        time: int
+            every time point bigger than this number will be deleted
+
+        itself: bool
+            if True will be done in the data it self False returns the new data
         """
         if itself:
             self.data=self.data[self.data['Time']<time]
         else:
             return self.data[self.data['Time']<time]
     
-    def cutData(self,left=None, rigth=None, itself=False):
-        """ cut the data in wavelenght range
-         Parameters
-        ----------
-        left: int (lower wavelength values of this number will be deleted)
-        rigth: int (hihgher wavelength values of this number will be deleted)
-        itself: bool (if True will be done in the data it self False returns the new data)
-        """
-        rigth_index=pd.Series(self.wavelength-rigth).abs().sort_values().index[0]
-        left_index=pd.Series(self.wavelength-left).abs().sort_values().index[0]
-        # lst=['Time']+[round(i,3) for i in self.wavelength[left_index:rigth_index]]
-        cut_data=self.data.iloc[:, left_index+1:rigth_index+1]
-        wavelength=self.wavelength[left_index:rigth_index]
-        if itself == True:
-            time = self.data.Time.values
-            self.data=cut_data
-            self.data.insert(loc=0, column='Time', value=time)
-            self.wavelength=wavelength
-        else:
-            return cut_data,wavelength
-        
-    def baselineDrift(self,baseline_range):
-        """
-        correct the baseline drift
+    def cut_data_wavelength(self, left=None, right=None, itself=False):
+        """ cut the data in wavelength range
+
         Parameters
         ----------
-        baseline_range: list or tuple (first element:first value of the range; second element: the last value) 
-        the range should be an area were the baseline should be cero
+        left: int
+            lower wavelength values of this number will be deleted
+
+        right: int
+            higher wavelength values of this number will be deleted
+
+        itself: bool
+            if True will the data it self is cut if False returns
+            the new data
         """
-        self.baseline_drift_done=True
-        rigth_index=pd.Series(self.wavelength-baseline_range[1]).abs().sort_values().index[0]
-        left_index=pd.Series(self.wavelength-baseline_range[0]).abs().sort_values().index[0]
+        rigth_index = pd.Series(self.wavelength-right).abs().sort_values()
+        left_index = pd.Series(self.wavelength-left).abs().sort_values()
+        rigth_index = rigth_index.index[0]
+        left_index = left_index.index[0]
+        # lst=['Time']+[round(i,3) for i in self.wavelength[left_index:rigth_index]]
+        cut_data = self.data.iloc[:, left_index+1:rigth_index+1]
+        wavelength = self.wavelength[left_index:rigth_index]
+        if itself:
+            time = self.data.Time.values
+            self.data = cut_data
+            self.data.insert(loc=0, column='Time', value=time)
+            self.wavelength = wavelength
+        else:
+            return cut_data, wavelength
+        
+    def baseline_drift(self, baseline_range):
+        """
+        correct the baseline drift
+
+        Parameters
+        ----------
+        baseline_range: list or tuple of length 2
+            first element: first value of the range;
+            second element: the last value of the range
+
+        e.g.: baseline_range=[680, 700]; the average value of the spectra
+            between 680 and 700 nm is subtracted.
+
+        the range should be an area were the baseline should be zero
+        """
+        self.baseline_drift_done = True
+        rigth_index = pd.Series(self.wavelength-baseline_range[1]).abs()
+        left_index = pd.Series(self.wavelength-baseline_range[0]).abs()
+        rigth_index = rigth_index.sort_values().index[0]
+        left_index = left_index.sort_values().index[0]
         for i in range(len(self.data)):
-            value= self.data.iloc[i,left_index:rigth_index].mean()
-            self.data.iloc[i,1:]= self.data.iloc[i,1:]- value
-            print (i,'out of',len(self.data),'completed')
+            value = self.data.iloc[i, left_index:rigth_index].mean()
+            self.data.iloc[i, 1:] = self.data.iloc[i, 1:] - value
+            print(i, 'out of', len(self.data), 'completed')
                
-    def plotData(self,fsize=14,save=None):
+    def plotData(self, fsize=14, save=None):
         """
         Plot the data
         Parameters
         ----------
-        fsize: default 14 (fotn size for axis and string in figure)
-        save: default None (else a string including the path were the figure should be save format as tiff)
+        fsize: default 14
+            fotn size for axis and string in figure
+
+        save: string
+            string including the path were the figure should be save format as
+            tiff. Default is None; which will not save the figure
         """
-        colors = plt.cm.rainbow(np.linspace(0,1,len(self.data)))
-        cnorm = mpl.colors.Normalize(vmin=self.data.Time.iloc[0],vmax=self.data.Time.iloc[-1])
-        cpickmap = mpl.cm.ScalarMappable(norm=cnorm,cmap=plt.cm.rainbow)
+        colors = plt.cm.rainbow(np.linspace(0, 1, len(self.data)))
+        cnorm = mpl.colors.Normalize(vmin=self.data.Time.iloc[0],
+                                     vmax=self.data.Time.iloc[-1])
+        cpickmap = mpl.cm.ScalarMappable(norm=cnorm, cmap=plt.cm.rainbow)
         cpickmap.set_array([])
         plt.figure()
         for ii in range(len(self.data)):
-            plt.plot(self.wavelength,self.data.iloc[ii,1:],color=colors[ii])
-            plt.xlabel('Wavelenght (nm)',size=fsize)
-            plt.ylabel('Absorbance',size=fsize)
-        plt.xlim(self.wavelength[0],self.wavelength[-1])
+            plt.plot(self.wavelength, self.data.iloc[ii, 1:], color=colors[ii])
+            plt.xlabel('Wavelenght (nm)', size=fsize)
+            plt.ylabel('Absorbance', size=fsize)
+        plt.xlim(self.wavelength[0], self.wavelength[-1])
         plt.minorticks_on()
-        plt.tick_params( which = 'both', direction='in',bottom=True, top=True,\
-                        left=True, right=True, labelsize = fsize)
-        plt.colorbar(cpickmap).set_label(label='Time (S)',size=15)
-        if save != None:
-            plt.savefig((save+'.tiff'),bbox_inches='tight',dpi=300)
+        plt.tick_params(which='both', direction='in', bottom=True, top=True,
+                        left=True, right=True, labelsize=fsize)
+        plt.colorbar(cpickmap).set_label(label='Time (S)', size=15)
+        if save is not None:
+            plt.savefig((save+'.tiff'), bbox_inches='tight', dpi=300)
         plt.show()
     
-    def differences(self,point):
+    def differences(self, point: int):
         """
-        calculate the differences at a wavelenght point
+        calculate the differences between spectra at the given wavelength point
+        for the entire spectra in the data set
+
         Parameters
         ----------
-        point: int or float (value were to calculate the differences)
+        point: int or float
+            value were to calculate the differences
         """
-        index=pd.Series(self.wavelength-point).abs().sort_values().index[0]
-        self_diff=[0]+[abs(self.data.iloc[i,index]-self.data.iloc[ii,index])\
-                   for i,ii in enumerate(range(1,len(self.data)))]
+        index = pd.Series(self.wavelength-point).abs().sort_values().index[0]
+        self_diff = [0]+[abs(self.data.iloc[i, index]
+                             - self.data.iloc[ii, index])
+                         for i, ii in enumerate(range(1, len(self.data)))]
         return self_diff
     
-    def filterSpike(self,point,threashold,inform=True):
+    def filterSpike(self, wavelength: int, threshold: float, verbose=True):
         """
-        filters data using the diferences at a wavelength point calculated using differences method
+        filters data using the differences at a wavelength point calculated
+        using differences method
+
         Parameters
         ----------
-        point: int or float (value of wavelength use to filter)
-        inform: bool default True (If True prints the number and percentage of deleted points)
+        wavelength: int or float
+            value of wavelength use to filter
+
+        threshold: float
+                threshold value to delete spectra, if the difference between a
+                spectrum and its previous at the given wavelength is higher
+                than threshold the spectrum is deleted.
+
+        verbose: bool default True
+            If True, prints the number and percentage of deleted points
         """
-        self.data['diff']=self.differences(point)
-        size1=len(self.data)
-        self.data=(self.data[self.data['diff']<threashold]).drop(['diff'],axis=1)
-        cut=size1-len(self.data)
-        if inform:
-            print(f'filtered {cut} points from {size1}, {round(cut/size1*100,1)}% of data')
+        self.data['diff'] = self.differences(wavelength)
+        size1 = len(self.data)
+        self.data = (self.data[self.data['diff'] < threshold]).drop(['diff'],
+                                                                    axis=1)
+        cut = size1-len(self.data)
+        if verbose:
+            print(f'filtered {cut} points from {size1}, '
+                  f'{round(cut/size1*100,1)}% of data')
     
-    def plotOneWave(self,wavelength_point,plot_diff=False,fsize=14,save=None):
+    def plotOneWave(self, wavelength_point, plot_diff=False, fsize=14,
+                    save=None):
         """
-        Plot one wavelength data
+        Plot one trace of the data set at given wavelength
+
         Parameters
         ----------
-        wavelength_point: int or float (value of wavelength to be plotted)
-        fsize: default 14 (fotn size for axis and string in figure)
-        plot_diff: bool; default False (if True the differences at this wavelength_point will be plotted)
-        save: default None (else a string including the path were the figure should be save format as tiff)
+        wavelength_point: int or float
+            value of wavelength to be plotted
+
+        fsize: int
+            font size for axis and string in figure (default 14)
+
+        plot_diff: bool;
+           if True instead of the trace, the differences at this
+           wavelength_point will be plotted.  (default False)
+
+        save: string
+            string including the path were the figure should be save format as
+            tiff. Default is None; which will not save the figure
         """
-        index=pd.Series(self.wavelength-wavelength_point).abs().sort_values().index[0]
+        index = pd.Series(self.wavelength-wavelength_point).abs()
+        index = index.sort_values().index[0]
         if plot_diff:
-            diff=self.differences(wavelength_point)
-            fig, ax = plt.subplots(nrows=2,ncols=1,sharex=True)
-            ax[1].plot(self.data['Time'],self.data.iloc[:,index],label=(str(wavelength_point) +' nm'))
-            ax[0].plot(self.data['Time'],diff,label='difference')
-            ax[0].set_ylabel('difference',size=fsize)
-            ax[1].set_ylabel('Absorbance',size=fsize)
+            diff = self.differences(wavelength_point)
+            fig, ax = plt.subplots(nrows=2, ncols=1, sharex=True)
+            ax[1].plot(self.data['Time'], self.data.iloc[:, index],
+                       label=(str(wavelength_point) + ' nm'))
+            ax[0].plot(self.data['Time'], diff, label='difference')
+            ax[0].set_ylabel('difference', size=fsize)
+            ax[1].set_ylabel('Absorbance', size=fsize)
             ax[1].legend()
             ax[0].legend()
         else:
             plt.figure()
-            plt.plot(self.data['Time'],self.data.iloc[:,index],label=(str(wavelength_point) +' nm'))
+            plt.plot(self.data['Time'], self.data.iloc[:, index],
+                     label=(str(wavelength_point) + ' nm'))
             plt.legend()
-            plt.ylabel('Absorbance',size=fsize)
+            plt.ylabel('Absorbance', size=fsize)
         plt.minorticks_on()
-        plt.tick_params( which = 'both', direction='in',bottom=True, top=True,\
-                        left=True, right=True, labelsize = fsize)
-        plt.xlabel('Time (S)',size=fsize)
+        plt.tick_params(which='both', direction='in', bottom=True, top=True,
+                        left=True, right=True, labelsize=fsize)
+
+        plt.xlabel('Time (S)', size=fsize)
         plt.tight_layout()
-        if save != None:
-            plt.savefig((save+'.tiff'),bbox_inches='tight',dpi=300)
+        if save is not None:
+            plt.savefig((save+'.tiff'), bbox_inches='tight', dpi=300)
         plt.show()
         
-    def plotSeveralWaves(self,wavelength_points,fsize=14,save=None):
+    def plotSeveralWaves(self, wavelength_points: list, fsize=14, save=None):
         """
         Plot several wavelengths of the data
         Parameters
         ----------
-        wavelength_points: list (values of wavelength to be plotted)
-        fsize: default 14 (fotn size for axis and string in figure)
-        save: default None (else a string including the path were the figure should be save format as tiff)
+        wavelength_points: list
+            values of wavelength to be plotted
+
+        fsize: int
+            font size for axis and string in figure (default 14)
+
+        save: string
+            string including the path were the figure should be save format as
+            tiff. Default is None; which will not save the figure
         """
         fig, ax = plt.subplots(1)
         for i in wavelength_points:
             index=pd.Series(self.wavelength-i).abs().sort_values().index[0]
-            ax.plot(self.data['Time'],self.data.iloc[:,index])
-        plt.legend([str(i)+ ' nm' for i in wavelength_points], loc='best')
-        plt.xlabel('Time (S)',size=fsize)
-        plt.ylabel('Absorbance',size=fsize)
+            ax.plot(self.data['Time'], self.data.iloc[:, index])
+        plt.legend([str(i) + ' nm' for i in wavelength_points], loc='best')
+        plt.xlabel('Time (S)', size=fsize)
+        plt.ylabel('Absorbance', size=fsize)
         plt.minorticks_on()
-        plt.tick_params( which = 'both', direction='in',bottom=True, top=True,\
-                        left=True, right=True, labelsize = fsize)
+        plt.tick_params(which='both', direction='in', bottom=True, top=True,
+                        left=True, right=True, labelsize=fsize)
         plt.tight_layout()
-        if save != None:
-            plt.savefig((save+'.tiff'),bbox_inches='tight',dpi=300)
+        if save is None:
+            plt.savefig((save+'.tiff'), bbox_inches='tight',dpi=300)
         plt.show()
         
-    def getSeveralWaves(self,wavelength_points):
+    def getSeveralWaves(self, wavelength_points: list):
         """
         return time trace of wavelengths of the data
+
         Parameters
         ----------
-        wavelength_points: list (values of wavelength to be plotted)
+        wavelength_points:
+            values of wavelength to be retrieved
+
+        Return:
+        ------
+        Pandas data frame
         """
-        index=[pd.Series(self.wavelength-i).abs().sort_values().index[0] for i in wavelength_points]
-        index=[0]+index
-        return self.data.iloc[:,index]
+        index = [pd.Series(self.wavelength-i).abs().sort_values().index[0]
+                 for i in wavelength_points]
+        index = [0]+index
+        return self.data.iloc[:, index]
         
-    def plotFirstLast(self, mean=10,fsize=14,save=None):
+    def plotFirstLast(self, mean=10, fsize=14, save=None):
         """
         Plot mean of the firsts and lasts spectra of the data
         Parameters
@@ -228,19 +327,21 @@ class FilterData():
         save: default None (else a string including the path were the figure should be save format as tiff)
         """
         plt.figure()
-        plt.plot(self.wavelength,self.data.iloc[0:mean,1:].mean(),label='First spetrum')
-        plt.plot(self.wavelength,self.data.iloc[-mean:-1,1:].mean(),label='Last spetrum')
-        plt.xlabel('Wavelenght (nm)',size=fsize)
-        plt.ylabel('Absorbance (A.U.)',size=fsize)
+        plt.plot(self.wavelength, self.data.iloc[0:mean, 1:].mean(),
+                 label='First spetrum')
+        plt.plot(self.wavelength, self.data.iloc[-mean:-1, 1:].mean(),
+                 label='Last spetrum')
+        plt.xlabel('Wavelenght (nm)', size=fsize)
+        plt.ylabel('Absorbance (A.U.)', size=fsize)
         plt.legend(loc='best')
         plt.minorticks_on()
-        plt.tick_params( which = 'both', direction='in',bottom=True, top=True,\
-                        left=True, right=True, labelsize = fsize)
-        if save != None:
-            plt.savefig((save+'.tiff'),bbox_inches='tight',dpi=300)
+        plt.tick_params(which='both', direction='in', bottom=True, top=True,
+                        left=True, right=True, labelsize=fsize)
+        if save is None:
+            plt.savefig((save+'.tiff'), bbox_inches='tight', dpi=300)
         plt.show()
 
-    def plotSpec(self, spec,fsize=14,save=None):
+    def plotSpec(self, spec, fsize=14, save=None):
         """
         Plot One spectrum from the dataset
         Parameters
@@ -249,37 +350,44 @@ class FilterData():
         fsize: default 14 (fotn size for axis and string in figure)
         save: default None (else a string including the path were the figure should be save format as tiff)
         """
-        if type(spec)==int or  type(spec)==float:
-            spec=[spec]
+        if type(spec) == int or type(spec) == float:
+            spec = [spec]
         plt.figure()
         for i in spec:
-            plt.plot(self.wavelength,self.data.iloc[i,1:],label='First spetrum')
+            plt.plot(self.wavelength,self.data.iloc[i, 1:],
+                     label='First spetrum')
         plt.xlabel('Wavelenght (nm)',size=fsize)
         plt.ylabel('Absorbance (A.U.)',size=fsize)
         plt.legend(loc='best')
         plt.minorticks_on()
         plt.tick_params( which = 'both', direction='in',bottom=True, top=True,\
                         left=True, right=True, labelsize = fsize)
-        if save != None:
-            plt.savefig((save+'.tiff'),bbox_inches='tight',dpi=300)
+        if save is not None:
+            plt.savefig((save+'.tiff'), bbox_inches='tight',dpi=300)
         plt.show()    
     
     def getFirstLast(self, mean=10,):
         """
-        Return the mean of N spectra for the first and lasts spectra of the data
+        Return the mean of N spectra for the first and lasts entries of the data
+
         Parameters
         ----------
-        mean: int (default 10) (number of spectra to be average)
+        mean:
+            number of spectra to be average. int (default 10)
         """
-        return [(self.wavelength,self.data.iloc[0:mean,1:].mean()),(self.wavelength,self.data.iloc[-mean:-1,1:].mean())]
+        return [(self.wavelength, self.data.iloc[0:mean, 1:].mean()),
+                (self.wavelength, self.data.iloc[-mean:-1, 1:].mean())]
     
-    def smoothData(self,window_length, polyorder=2,itself=True):
+    def smoothData(self, window_length, polyorder=2, itself=True):
         """
         smooth the data using savitky-golay filter
+
         Parameters
         ----------
-        window_length: int and uneven (number of fitting previous points to be used to predict the next)
-        order: int (default 2) order of the polynom to fit data 
+        window_length: int (WARNING: must be un-even)
+            number of fitting previous points to be used to predict the next
+        polyorder: int
+            order of the polynomial to fit data (default 2)
         """
         smooth_data=pd.DataFrame(np.zeros(self.data.shape),columns=self.data.columns)
         smooth_data.Time=self.data.Time.values
