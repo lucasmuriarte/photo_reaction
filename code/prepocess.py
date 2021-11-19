@@ -2,7 +2,7 @@
 """
 Created on Sat Nov 30 22:24:57 2019
 
-@author: lucas
+@author: lucas martinez uriarte
 """
 
 import pandas as pd
